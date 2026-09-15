@@ -31,7 +31,8 @@ export function TgtetForm({ onCdnUrl, loading }: Props) {
 
     setSubmitting(true)
     try {
-      const resp = await fetch('/api/fetch-tgtet', {
+      const baseUrl = import.meta.env.VITE_API_URL || ''
+      const resp = await fetch(`${baseUrl}/api/fetch-tgtet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
