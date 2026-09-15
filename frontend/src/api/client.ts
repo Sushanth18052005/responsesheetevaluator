@@ -1,6 +1,6 @@
 import type { ParseResponse, QuestionResponse, MarkingScheme } from '../types';
 
-const BASE_URL = '';
+const BASE_URL = import.meta.env.VITE_API_URL || '';
 
 class ApiError extends Error {
   code: string;
