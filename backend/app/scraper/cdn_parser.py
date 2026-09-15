@@ -168,6 +168,28 @@ def _resolve_images(tag: Tag, base_url: str) -> str:
     return clone.decode_contents()
 
 
+def _clean_option_html(tag: Tag, base_url: str) -> str:
+    """Get option content HTML, stripping tick/cross indicator images and the leading 'N.' prefix."""
+    if not tag:
+        return ""
+    clone = deepcopy(tag)
+    # Remove tick/cross indicator images
+    for img in clone.find_all("img"):
+        src = img.get("src", "")
+        if re.search(r'tick\.png|cross\.png|right\.png|wrong\.png', src, re.I):
+            img.decompose()
+    # Resolve remaining image paths
+    if base_url:
+        for img in clone.find_all("img"):
+            src = img.get("src", "")
+            if src and not src.startswith(("http://", "https://", "data:")):
+                img["src"] = base_url + src
+    html = clone.decode_contents()
+    # Strip leading "N." prefix (e.g. "1." or " 2. ")
+    html = re.sub(r'^\s*\d\s*\.\s*', '', html)
+    return html.strip()
+
+
 def _strategy_question_pnl(
     soup: BeautifulSoup, base_url: str = ""
 ) -> tuple[list[QuestionResponse], list[str], list[str]]:
@@ -328,7 +350,7 @@ def _strategy_question_pnl(
                     opt_m = re.match(r'(\d)\s*\.', opt_text)
                     if opt_m:
                         opt_num = opt_m.group(1)
-                        options[opt_num] = _resolve_images(cells[1], base_url)
+                        options[opt_num] = _clean_option_html(cells[1], base_url)
 
         seen_q.add(q_num)
         questions.append(QuestionResponse(
