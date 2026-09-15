@@ -13,6 +13,7 @@ CDN response sheets from digialm.com use div.question-pnl blocks:
 import re
 from copy import deepcopy
 from typing import Optional
+from urllib.parse import quote
 from bs4 import BeautifulSoup, Tag
 from ..models.schemas import CDNResponse, QuestionResponse
 
@@ -155,16 +156,45 @@ def _extract_questions(
     return questions, sections, warnings
 
 
+def _origin_from_url(url: str) -> str:
+    """Extract scheme + host from a URL, e.g. https://cdn3.digialm.com"""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url)
+        return f"{p.scheme}://{p.netloc}" if p.scheme and p.netloc else ""
+    except Exception:
+        return ""
+
+
+def _resolve_img_src(src: str, base_url: str, origin: str) -> str:
+    """Resolve a relative img src to a proxy URL via /api/cdn-image."""
+    if not src or src.startswith("data:"):
+        return src
+    # Already absolute
+    if src.startswith(("http://", "https://")):
+        absolute = src
+    elif src.startswith("/"):
+        absolute = origin + src if origin else src
+    else:
+        absolute = base_url + src if base_url else src
+    # Route through our proxy so the Referer header is set correctly
+    if absolute.startswith(("http://", "https://")):
+        return "/api/cdn-image?url=" + quote(absolute, safe="")
+    return absolute
+
+
 def _resolve_images(tag: Tag, base_url: str) -> str:
-    """Get inner HTML of a tag, resolving relative img src to absolute URLs."""
+    """Get inner HTML of a tag, routing all CDN img src through our proxy."""
     if not tag:
         return ""
     clone = deepcopy(tag)
-    if base_url:
-        for img in clone.find_all("img"):
-            src = img.get("src", "")
-            if src and not src.startswith(("http://", "https://", "data:")):
-                img["src"] = base_url + src
+    origin = _origin_from_url(base_url)
+    for img in clone.find_all("img"):
+        src = img.get("src", "")
+        if src and not src.startswith("data:"):
+            img["src"] = _resolve_img_src(src, base_url, origin)
     return clone.decode_contents()
 
 
@@ -173,17 +203,17 @@ def _clean_option_html(tag: Tag, base_url: str) -> str:
     if not tag:
         return ""
     clone = deepcopy(tag)
+    origin = _origin_from_url(base_url)
     # Remove tick/cross indicator images
     for img in clone.find_all("img"):
         src = img.get("src", "")
         if re.search(r'tick\.png|cross\.png|right\.png|wrong\.png', src, re.I):
             img.decompose()
-    # Resolve remaining image paths
-    if base_url:
-        for img in clone.find_all("img"):
-            src = img.get("src", "")
-            if src and not src.startswith(("http://", "https://", "data:")):
-                img["src"] = base_url + src
+    # Resolve remaining image paths through proxy
+    for img in clone.find_all("img"):
+        src = img.get("src", "")
+        if src and not src.startswith("data:"):
+            img["src"] = _resolve_img_src(src, base_url, origin)
     html = clone.decode_contents()
     # Strip leading "N." prefix (e.g. "1." or " 2. ")
     html = re.sub(r'^\s*\d\s*\.\s*', '', html)

@@ -1,7 +1,10 @@
 """API routes for the CDN Response Sheet Evaluator."""
 
 import logging
-from fastapi import APIRouter, HTTPException
+from urllib.parse import urlparse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
+import httpx
 from ..models.schemas import (
     ParseRequest, ParseResponse, MarkingScheme,
 )
@@ -11,6 +14,8 @@ from ..evaluator.evaluator import evaluate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
+
+_IMAGE_ALLOWED_HOSTS = {"cdn3.digialm.com", "cdn.digialm.com", "digialm.com"}
 
 
 @router.post("/parse", response_model=ParseResponse)
@@ -64,6 +69,42 @@ async def evaluate_with_scheme(body: dict):
     except Exception as e:
         logger.exception("Evaluation error")
         return {"success": False, "error": f"Evaluation failed: {e}"}
+
+
+@router.get("/cdn-image")
+async def proxy_cdn_image(url: str = Query(..., description="Absolute CDN image URL")):
+    """Proxy CDN images with correct Referer header so they don't 400."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if not any(host == d or host.endswith(f".{d}") for d in _IMAGE_ALLOWED_HOSTS):
+        raise HTTPException(status_code=400, detail="Domain not allowed")
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Invalid scheme")
+
+    referer = f"{parsed.scheme}://{parsed.netloc}/"
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "Referer": referer,
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                  "Chrome/120.0.0.0 Safari/537.36",
+                },
+            )
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail="CDN returned error")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to fetch image from CDN")
+
+    ct = resp.headers.get("content-type", "application/octet-stream")
+    return Response(
+        content=resp.content,
+        media_type=ct,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.post("/fetch-tgtet")
