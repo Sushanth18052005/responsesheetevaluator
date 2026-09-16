@@ -3,8 +3,9 @@
 import ipaddress
 import logging
 import os
+import re
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -69,6 +70,9 @@ def validate_url(url: str) -> str:
         ip_str = addr[0]
         if _is_private_ip(ip_str):
             raise FetchError("URL resolves to a private/internal IP address.", "SSRF_BLOCKED")
+    # Normalize path: collapse consecutive slashes (e.g. //per -> /per)
+    clean_path = re.sub(r'/+', '/', parsed.path) if parsed.path else parsed.path
+    url = urlunparse(parsed._replace(path=clean_path))
     return url
 
 
